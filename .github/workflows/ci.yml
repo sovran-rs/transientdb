@@ -43,13 +43,27 @@ jobs:
       - name: Check lints
         run: cargo clippy --all-features -- -D warnings
 
-      # Run tests without stress tests
+      # Run regular tests
       - name: Run tests
-        run: cargo test --all-features --lib --doc
+        run: cargo test --all-features --lib
 
       # Check docs build
       - name: Check docs
         run: cargo doc --no-deps
+
+  doc-tests:
+    name: Doc Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run doc tests
+        run: cargo test --doc
 
   msrv:
     name: MSRV Check (${{ matrix.os }})
@@ -60,7 +74,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.80.0
+      - uses: dtolnay/rust-toolchain@1.80.0  # Updated MSRV
       - uses: Swatinem/rust-cache@v2
       - name: Check builds with minimum supported Rust version
         run: cargo check --all-features
@@ -71,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
