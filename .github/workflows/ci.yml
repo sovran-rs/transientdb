@@ -95,3 +95,33 @@ jobs:
         run: |
           # Run all tests in the tests directory with increased thread stack size
           RUST_MIN_STACK=8388608 cargo test --test '*'
+
+  apple-simulators:
+    name: Apple Simulator Tests
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-ios-sim     # iOS simulator (Apple Silicon)
+          - aarch64-apple-tvos-sim    # tvOS simulator (Apple Silicon)
+          - aarch64-apple-xros-sim    # visionOS simulator
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --target ${{ matrix.target }} --all-features
+
+      - name: Run tests
+        run: |
+          RUST_MIN_STACK=8388608 cargo test --target ${{ matrix.target }} --all-features
