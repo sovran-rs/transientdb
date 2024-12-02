@@ -106,12 +106,18 @@ jobs:
           - target: aarch64-apple-ios-sim
             sdk: iphonesimulator
             platform: iOS
+            runtime: ios
+            device: iPhone 14
           - target: aarch64-apple-tvos-sim
             sdk: appletvsimulator
             platform: tvOS
+            runtime: tvos
+            device: Apple TV
           - target: aarch64-apple-xros-sim
             sdk: xrsimulator
             platform: visionOS
+            runtime: xros
+            device: Apple Vision Pro
     steps:
       - uses: actions/checkout@v4
 
@@ -127,13 +133,17 @@ jobs:
 
       - name: Run tests
         run: |
-          # Get SDK path
-          SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
+          # Create and boot simulator
+          DEVICE_ID=$(xcrun simctl create test-device "${{ matrix.device }}" "com.apple.CoreSimulator.SimRuntime.${{ matrix.runtime }}")
+          xcrun simctl boot "${DEVICE_ID}"
           
-          # Set simulator environment
-          export DYLD_ROOT_PATH="${SDK_PATH}"
-          export DYLD_LIBRARY_PATH="${SDK_PATH}/usr/lib/system:${SDK_PATH}/usr/lib"
-          export DYLD_FRAMEWORK_PATH="${SDK_PATH}/System/Library/Frameworks:${SDK_PATH}/System/Library/PrivateFrameworks"
+          # Get the test binary path
+          TEST_BINARY=$(find target/${{ matrix.target }}/debug/deps -name "transientdb-*" -type f ! -name "*.d")
           
-          # Run tests with increased stack size
-          RUST_MIN_STACK=8388608 cargo +nightly test --target ${{ matrix.target }} --all-features
+          # Run tests in simulator
+          RUST_MIN_STACK=8388608 xcrun simctl spawn "${DEVICE_ID}" "${TEST_BINARY}"
+          
+          # Cleanup
+          xcrun simctl shutdown "${DEVICE_ID}"
+          xcrun simctl delete "${DEVICE_ID}"
+          
