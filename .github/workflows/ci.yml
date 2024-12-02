@@ -131,6 +131,7 @@ jobs:
       - name: Build and Test
         run: |
           # Build tests specifically
+          echo "=== Building tests ==="
           cargo +nightly test --no-run --target ${{ matrix.target }}
           
           # Debug: Show directory structure
@@ -145,15 +146,15 @@ jobs:
           echo "=== Booting simulator ==="
           xcrun simctl boot "${DEVICE_ID}"
           
-          # Get the test binary path - look for executables only
+          # Get the test binary path - using mode/type to identify executables
           echo "=== Locating test binary ==="
-          TEST_BINARY=$(find target/${{ matrix.target }}/debug/deps -type f -executable -name "transientdb-*" ! -name "*.d" ! -name "*.rlib" ! -name "*.rmeta" ! -name "*.o")
+          TEST_BINARY=$(find target/${{ matrix.target }}/debug/deps -type f -perm +111 -name "transientdb-*" ! -name "*.d" ! -name "*.rlib" ! -name "*.rmeta" ! -name "*.o")
           echo "Test binary path: ${TEST_BINARY}"
           
           # Verify binary exists and is executable
           ls -l "${TEST_BINARY}"
           
-          # Run tests in simulator with more logging
+          # Run tests in simulator
           echo "=== Running tests ==="
           RUST_MIN_STACK=8388608 RUST_BACKTRACE=1 xcrun simctl spawn "${DEVICE_ID}" "${TEST_BINARY}"
           
