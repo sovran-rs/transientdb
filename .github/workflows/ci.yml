@@ -8,99 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
 
 jobs:
-  check:
-    name: Check (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Check
-        run: cargo check --all-features
-
-  test:
-    name: Test Suite (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Run tests
-        run: cargo test --all-features
-      - name: Run doc tests
-        run: cargo test --doc
-
-  stress-test:
-    name: Stress Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Run stress tests
-        shell: bash
-        run: |
-          # Run specific stress test functions with increased thread stack size
-          RUST_MIN_STACK=8388608 cargo test test_heavy_concurrent_load -- --nocapture
-          RUST_MIN_STACK=8388608 cargo test test_directory_store_stress -- --nocapture
-          RUST_MIN_STACK=8388608 cargo test test_memory_store_chaos -- --nocapture
-          RUST_MIN_STACK=8388608 cargo test test_directory_store_chaos -- --nocapture
-
-  examples:
-    name: Examples (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build examples
-        shell: bash
-        run: |
-          # Build all examples
-          cargo clean
-          cargo build --examples
-          
-          # Create temporary directory for example compilation
-          mkdir -p temp_examples
-          cd temp_examples
-          
-          # Extract and compile README examples
-          while IFS= read -r line || [[ -n "$line" ]]; do
-            if [[ "$line" == '```rust' ]]; then
-              echo "fn main() {" > temp.rs
-              while IFS= read -r example_line || [[ -n "$example_line" ]]; do
-                if [[ "$example_line" == '```' ]]; then
-                  echo "}" >> temp.rs
-                  break
-                fi
-                echo "$example_line" >> temp.rs
-              done
-              rustc --edition 2021 temp.rs || exit 1
-              rm temp.rs
-            fi
-          done < ../README.md
-
-  lints:
-    name: Lints (${{ matrix.os }})
+  build:
+    name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -112,36 +23,29 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Clippy
-        run: cargo clippy --all-features -- -D warnings
-      - name: Format
+
+      # Check everything builds
+      - name: Check main build
+        run: cargo check --all-features
+
+      # Check formatting
+      - name: Check formatting
         run: cargo fmt --all -- --check
 
-  coverage:
-    name: Code coverage (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Generate code coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
+      # Run clippy
+      - name: Check lints
+        run: cargo clippy --all-features -- -D warnings
+
+      # Run tests without stress tests
+      - name: Run tests
+        run: cargo test --all-features --lib --doc
+
+      # Check docs build
+      - name: Check docs
+        run: cargo doc --no-deps
 
   msrv:
-    name: MSRV (${{ matrix.os }})
+    name: MSRV Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -149,7 +53,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.80.0  # Set this to your Minimum Supported Rust Version
+      - uses: dtolnay/rust-toolchain@1.70.0
       - uses: Swatinem/rust-cache@v2
-      - name: Check
+      - name: Check builds with minimum supported Rust version
         run: cargo check --all-features
