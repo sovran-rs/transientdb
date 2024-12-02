@@ -128,14 +128,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: cargo +nightly build --target ${{ matrix.target }} --all-features
-
-      - name: Run tests
+      - name: Build and Test
         run: |
+          # Build tests specifically
+          cargo +nightly test --no-run --target ${{ matrix.target }}
+          
           # Debug: Show directory structure
           echo "=== Directory structure ==="
-          ls -R target/${{ matrix.target }}/debug/deps/
+          ls -la target/${{ matrix.target }}/debug/deps/
           
           # Create and boot simulator
           echo "=== Creating simulator ==="
@@ -145,14 +145,10 @@ jobs:
           echo "=== Booting simulator ==="
           xcrun simctl boot "${DEVICE_ID}"
           
-          # Get the test binary path
+          # Get the test binary path - look for executables only
           echo "=== Locating test binary ==="
-          TEST_BINARY=$(find target/${{ matrix.target }}/debug/deps -name "transientdb-*" -type f ! -name "*.d")
+          TEST_BINARY=$(find target/${{ matrix.target }}/debug/deps -type f -executable -name "transientdb-*" ! -name "*.d" ! -name "*.rlib" ! -name "*.rmeta" ! -name "*.o")
           echo "Test binary path: ${TEST_BINARY}"
-          
-          # Make binary executable
-          echo "=== Making binary executable ==="
-          chmod +x "${TEST_BINARY}"
           
           # Verify binary exists and is executable
           ls -l "${TEST_BINARY}"
