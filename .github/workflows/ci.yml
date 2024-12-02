@@ -97,15 +97,21 @@ jobs:
           RUST_MIN_STACK=8388608 cargo test --test '*'
 
   apple-simulators:
-    name: Apple Simulator Tests
+    name: ${{ matrix.platform }} Simulator Tests
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - aarch64-apple-ios-sim     # iOS simulator (Apple Silicon)
-          - aarch64-apple-tvos-sim    # tvOS simulator (Apple Silicon)
-          - aarch64-apple-xros-sim    # visionOS simulator
+        include:
+          - target: aarch64-apple-ios-sim
+            sdk: iphonesimulator
+            platform: iOS
+          - target: aarch64-apple-tvos-sim
+            sdk: appletvsimulator
+            platform: tvOS
+          - target: aarch64-apple-xros-sim
+            sdk: xrsimulator
+            platform: visionOS
     steps:
       - uses: actions/checkout@v4
 
@@ -121,4 +127,13 @@ jobs:
 
       - name: Run tests
         run: |
+          # Get SDK path
+          SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
+          
+          # Set simulator environment
+          export DYLD_ROOT_PATH="${SDK_PATH}"
+          export DYLD_LIBRARY_PATH="${SDK_PATH}/usr/lib/system:${SDK_PATH}/usr/lib"
+          export DYLD_FRAMEWORK_PATH="${SDK_PATH}/System/Library/Frameworks:${SDK_PATH}/System/Library/PrivateFrameworks"
+          
+          # Run tests with increased stack size
           RUST_MIN_STACK=8388608 cargo +nightly test --target ${{ matrix.target }} --all-features
