@@ -133,17 +133,35 @@ jobs:
 
       - name: Run tests
         run: |
+          # Debug: Show directory structure
+          echo "=== Directory structure ==="
+          ls -R target/${{ matrix.target }}/debug/deps/
+          
           # Create and boot simulator
+          echo "=== Creating simulator ==="
           DEVICE_ID=$(xcrun simctl create test-device "${{ matrix.device }}" "${{ matrix.runtime }}")
+          echo "Device ID: ${DEVICE_ID}"
+          
+          echo "=== Booting simulator ==="
           xcrun simctl boot "${DEVICE_ID}"
           
           # Get the test binary path
+          echo "=== Locating test binary ==="
           TEST_BINARY=$(find target/${{ matrix.target }}/debug/deps -name "transientdb-*" -type f ! -name "*.d")
+          echo "Test binary path: ${TEST_BINARY}"
           
-          # Run tests in simulator
-          RUST_MIN_STACK=8388608 xcrun simctl spawn "${DEVICE_ID}" "${TEST_BINARY}"
+          # Make binary executable
+          echo "=== Making binary executable ==="
+          chmod +x "${TEST_BINARY}"
+          
+          # Verify binary exists and is executable
+          ls -l "${TEST_BINARY}"
+          
+          # Run tests in simulator with more logging
+          echo "=== Running tests ==="
+          RUST_MIN_STACK=8388608 RUST_BACKTRACE=1 xcrun simctl spawn "${DEVICE_ID}" "${TEST_BINARY}"
           
           # Cleanup
+          echo "=== Cleanup ==="
           xcrun simctl shutdown "${DEVICE_ID}"
           xcrun simctl delete "${DEVICE_ID}"
-          
