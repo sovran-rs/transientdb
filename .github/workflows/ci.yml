@@ -149,7 +149,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.83.0  # Set this to your Minimum Supported Rust Version
+      - uses: dtolnay/rust-toolchain@1.80.0  # Set this to your Minimum Supported Rust Version
       - uses: Swatinem/rust-cache@v2
       - name: Check
         run: cargo check --all-features
