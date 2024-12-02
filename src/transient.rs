@@ -454,7 +454,7 @@ mod tests {
 	fn test_heavy_concurrent_load() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
-			max_items: 100_000,          // 100k items max
+			max_items: 50_000,          // 1M items max
 			max_fetch_size: 1024 * 1024, // 1MB fetch size
 		};
 		let store = MemoryStore::new(config);
