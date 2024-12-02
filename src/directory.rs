@@ -40,6 +40,9 @@ pub struct DirectoryConfig {
 	pub max_file_size: usize,
 }
 
+/// Type alias for the file validator function
+pub type FileValidator = Box<dyn Fn(&Path) -> Result<()> + Send + Sync>;
+
 /// A data store that persists items to files in a directory.
 ///
 /// Files are created with incrementing numerical prefixes and contain batched JSON data.
@@ -55,7 +58,7 @@ pub struct DirectoryStore {
 	writer: Option<BufWriter<File>>,
 	current_size: usize,
 	current_path: Option<PathBuf>,
-	file_validator: Option<Box<dyn Fn(&Path) -> Result<()> + Send + Sync>>,
+	file_validator: Option<FileValidator>,
 	next_index: AtomicU32,
 }
 

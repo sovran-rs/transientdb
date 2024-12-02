@@ -5,6 +5,13 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:  # Allows manual triggering
+    inputs:
+      run_stress_tests:
+        description: 'Run stress tests'
+        required: true
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -53,7 +60,27 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.80.0
+      - uses: dtolnay/rust-toolchain@1.70.0
       - uses: Swatinem/rust-cache@v2
       - name: Check builds with minimum supported Rust version
         run: cargo check --all-features
+
+  stress-tests:
+    name: Stress Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run stress tests
+        shell: bash
+        run: |
+          # Run specific stress test functions with increased thread stack size
+          RUST_MIN_STACK=8388608 cargo test test_heavy_concurrent_load -- --nocapture
+          RUST_MIN_STACK=8388608 cargo test test_directory_store_stress -- --nocapture
+          RUST_MIN_STACK=8388608 cargo test test_memory_store_chaos -- --nocapture
+          RUST_MIN_STACK=8388608 cargo test test_directory_store_chaos -- --nocapture
