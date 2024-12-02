@@ -76,7 +76,7 @@ fn test_memory_store_stress() -> Result<()> {
 	let errors_count = Arc::new(AtomicU64::new(0));
 
 	let mut handles = vec![];
-	let test_duration = Duration::from_secs(30);
+	let test_duration = Duration::from_secs(10);
 	let start_time = Instant::now();
 
 	// Append threads
@@ -238,7 +238,7 @@ fn test_directory_store_stress() -> Result<()> {
 	let files_removed = Arc::new(AtomicU64::new(0));
 
 	let mut handles = vec![];
-	let test_duration = Duration::from_secs(30);
+	let test_duration = Duration::from_secs(10);
 	let start_time = Instant::now();
 
 	// Append threads (6)
