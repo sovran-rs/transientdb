@@ -1,124 +1,195 @@
-use crate::{DataResult, DataStore, DataTransactionType, Equivalent};
+use crate::{DataResult, DataStore, Equivalent};
 use serde_json::Value;
-use std::io;
+use std::io::Result;
 use std::sync::Mutex;
 
-/// A thread-safe wrapper around a data store implementation.
+/// A thread-safe wrapper around a DataStore implementation that provides temporary data storage
+/// with batch processing capabilities.
 ///
-/// TransientDB provides synchronized access to any data store that implements the DataStore trait.
-/// It uses interior mutability via a Mutex to allow multiple threads to safely interact with
-/// the underlying store.
-///
-/// # Examples
-/// ```
-/// use transientdb::{MemoryConfig, MemoryStore, TransientDB};
-/// use serde_json::json;
-///
-/// // Create a store instance
-/// let store = MemoryStore::new(MemoryConfig {
-///     write_key: "test".into(),
-///     max_items: 1000,
-///     max_fetch_size: 1024,
-/// });
-///
-/// // Wrap it in TransientDB
-/// let db = TransientDB::new(store);
-///
-/// // Multiple threads can now safely access the store
-/// db.append(json!({"event": "test"}))?;
-/// if let Some(result) = db.fetch(None, None)? {
-///     // Process the data
-/// }
-/// # Ok::<(), std::io::Error>(())
-/// ```
-pub struct TransientDB {
-	store: Mutex<Box<dyn DataStore + Send>>,
+/// TransientDB uses interior mutability through a Mutex to allow concurrent access to the
+/// underlying data store. It's designed for scenarios where data needs to be temporarily
+/// stored and processed in batches, such as queuing events or logs.
+pub struct TransientDB<T> {
+	store: Mutex<Box<dyn DataStore<Output = T> + Send>>,
 }
 
-impl TransientDB {
-	/// Creates a new TransientDB instance wrapping the provided store.
+impl<T> TransientDB<T> {
+	/// Creates a new TransientDB instance with the provided data store implementation.
 	///
 	/// # Arguments
 	/// * `store` - Any implementation of DataStore that is Send + 'static
 	///
 	/// # Examples
 	/// ```
-	/// use transientdb::{DirectoryConfig, DirectoryStore, TransientDB};
-	/// use std::path::PathBuf;
+	/// use transientdb::{TransientDB, MemoryConfig, MemoryStore};
 	///
-	/// let store = DirectoryStore::new(DirectoryConfig {
-	///     write_key: "test".into(),
-	///     storage_location: PathBuf::from("/tmp/data"),
-	///     base_filename: "events".into(),
-	///     max_file_size: 1024,
-	/// })?;
-	///
+	/// let config = MemoryConfig {
+	///     write_key: "my-store".into(),
+	///     max_items: 1000,
+	///     max_fetch_size: 1024 * 1024, // 1MB
+	/// };
+	/// let store = MemoryStore::new(config);
 	/// let db = TransientDB::new(store);
-	/// # Ok::<(), std::io::Error>(())
 	/// ```
-	pub fn new(store: impl DataStore + Send + 'static) -> Self {
+	pub fn new(store: impl DataStore<Output = T> + Send + 'static) -> Self {
 		Self {
 			store: Mutex::new(Box::new(store)),
 		}
 	}
 
-	/// Checks if the underlying store contains any data.
+	/// Checks if the store contains any data that can be fetched.
+	///
+	/// # Examples
+	/// ```
+	/// use transientdb::{TransientDB, MemoryStore, MemoryConfig};
+	/// use serde_json::json;
+	///
+	/// let db = TransientDB::new(MemoryStore::new(MemoryConfig {
+	///     write_key: "test".into(),
+	///     max_items: 100,
+	///     max_fetch_size: 1024,
+	/// }));
+	///
+	/// assert!(!db.has_data());
+	/// db.append(json!({"test": "data"})).unwrap();
+	/// assert!(db.has_data());
+	/// ```
 	pub fn has_data(&self) -> bool {
 		self.store.lock().unwrap().has_data()
 	}
 
-	/// Returns the transaction type of the underlying store.
-	pub fn transaction_type(&self) -> DataTransactionType {
-		self.store.lock().unwrap().transaction_type()
-	}
-
-	/// Removes all data from the underlying store.
+	/// Removes all data from the store and resets it to initial state.
+	///
+	/// # Examples
+	/// ```
+	/// use transientdb::{TransientDB, MemoryStore, MemoryConfig};
+	/// use serde_json::json;
+	///
+	/// let db = TransientDB::new(MemoryStore::new(MemoryConfig {
+	///     write_key: "test".into(),
+	///     max_items: 100,
+	///     max_fetch_size: 1024,
+	/// }));
+	///
+	/// db.append(json!({"test": "data"})).unwrap();
+	/// assert!(db.has_data());
+	///
+	/// db.reset();
+	/// assert!(!db.has_data());
+	/// ```
 	pub fn reset(&self) {
-		let mut store = self.store.lock().unwrap();
-		store.reset();
+		self.store.lock().unwrap().reset();
 	}
 
-	/// Appends a JSON value to the underlying store.
+	/// Appends a new item to the store.
 	///
 	/// # Arguments
-	/// * `data` - The JSON value to append
+	/// * `data` - JSON value to store
 	///
-	/// # Errors
-	/// Returns any IO error from the underlying store.
-	pub fn append(&self, data: Value) -> io::Result<()> {
-		let mut store = self.store.lock().unwrap();
-		store.append(data)
+	/// # Examples
+	/// ```
+	/// use transientdb::{TransientDB, MemoryStore, MemoryConfig};
+	/// use serde_json::json;
+	///
+	/// let db = TransientDB::new(MemoryStore::new(MemoryConfig {
+	///     write_key: "test".into(),
+	///     max_items: 100,
+	///     max_fetch_size: 1024,
+	/// }));
+	///
+	/// // Append a single value
+	/// db.append(json!({"event": "user_login", "user_id": 123})).unwrap();
+	///
+	/// // Append structured data
+	/// db.append(json!({
+	///     "event": "purchase",
+	///     "details": {
+	///         "item_id": "ABC123",
+	///         "amount": 99.99,
+	///         "currency": "USD"
+	///     }
+	/// })).unwrap();
+	/// ```
+	pub fn append(&self, data: Value) -> Result<()> {
+		self.store.lock().unwrap().append(data)
 	}
 
-	/// Fetches data from the underlying store with optional limits.
+	/// Fetches a batch of data from the store, respecting optional count and size limits.
 	///
 	/// # Arguments
-	/// * `count` - Optional maximum number of items/files to fetch
+	/// * `count` - Optional maximum number of items to fetch
 	/// * `max_bytes` - Optional maximum total size in bytes to fetch
 	///
-	/// # Returns
-	/// * `Ok(Some(DataResult))` if data was available
-	/// * `Ok(None)` if no data was available
-	/// * `Err` if there was an IO error
+	/// # Examples
+	/// ```
+	/// use transientdb::{TransientDB, MemoryStore, MemoryConfig};
+	/// use serde_json::json;
+	///
+	/// let db = TransientDB::new(MemoryStore::new(MemoryConfig {
+	///     write_key: "test".into(),
+	///     max_items: 100,
+	///     max_fetch_size: 1024,
+	/// }));
+	///
+	/// // Add some data
+	/// for i in 0..5 {
+	///     db.append(json!({"index": i})).unwrap();
+	/// }
+	///
+	/// // Fetch up to 3 items
+	/// if let Ok(Some(result)) = db.fetch(Some(3), None) {
+	///     // Process the data
+	///     if let Some(data) = result.data {
+	///         println!("Fetched data: {:?}", data);
+	///     }
+	///
+	///     // Clean up the fetched items
+	///     if let Some(removable) = result.removable {
+	///         db.remove(&removable).unwrap();
+	///     }
+	/// }
+	///
+	/// // Fetch items with size limit (1KB)
+	/// let result = db.fetch(None, Some(1024));
+	/// ```
 	pub fn fetch(
 		&self,
 		count: Option<usize>,
 		max_bytes: Option<usize>,
-	) -> io::Result<Option<DataResult>> {
-		let mut store = self.store.lock().unwrap();
-		store.fetch(count, max_bytes)
+	) -> Result<Option<DataResult<T>>> {
+		self.store.lock().unwrap().fetch(count, max_bytes)
 	}
 
-	/// Removes items from the underlying store.
+	/// Removes previously fetched data from the store.
 	///
 	/// # Arguments
-	/// * `data` - Slice of items to remove
+	/// * `data` - Slice of removable items from a previous fetch operation
 	///
-	/// # Errors
-	/// Returns any IO error from the underlying store.
-	pub fn remove(&self, data: &[Box<dyn Equivalent>]) -> io::Result<()> {
-		let mut store = self.store.lock().unwrap();
-		store.remove(data)
+	/// # Examples
+	/// ```
+	/// use transientdb::{TransientDB, MemoryStore, MemoryConfig};
+	/// use serde_json::json;
+	///
+	/// let db = TransientDB::new(MemoryStore::new(MemoryConfig {
+	///     write_key: "test".into(),
+	///     max_items: 100,
+	///     max_fetch_size: 1024,
+	/// }));
+	///
+	/// // Add and fetch data
+	/// db.append(json!({"test": "data"})).unwrap();
+	///
+	/// if let Ok(Some(result)) = db.fetch(None, None) {
+	///     // Process the data...
+	///
+	///     // Then remove the processed items
+	///     if let Some(removable) = result.removable {
+	///         db.remove(&removable).unwrap();
+	///     }
+	/// }
+	/// ```
+	pub fn remove(&self, data: &[Box<dyn Equivalent>]) -> Result<()> {
+		self.store.lock().unwrap().remove(data)
 	}
 }
 
@@ -127,19 +198,18 @@ mod tests {
 	use crate::directory::{DirectoryConfig, DirectoryStore};
 	use crate::memory::{MemoryConfig, MemoryStore};
 	use crate::transient::TransientDB;
-	use crate::DataTransactionType;
 	use rand::Rng;
 	use serde_json::{json, Value};
 	use std::collections::HashSet;
-	use std::io::Write;
+	use std::io::Result;
 	use std::sync::atomic::{AtomicUsize, Ordering};
 	use std::sync::Arc;
 	use std::time::Duration;
-	use std::{fs, io, thread};
+	use std::{fs, thread};
 	use tempfile::TempDir;
 
 	#[test]
-	fn test_concurrent_appends() -> io::Result<()> {
+	fn test_concurrent_appends() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key-concurrent-appends".to_string(), // Unique key
 			max_items: 2000,
@@ -183,7 +253,7 @@ mod tests {
 		// Fetch and verify we have items from different threads
 		let mut thread_counts = vec![0; 10];
 		if let Some(result) = final_db.fetch(None, None)? {
-			let batch: Value = serde_json::from_slice(result.data.as_ref().unwrap())?;
+			let batch: Value = result.data.unwrap();
 			let items = batch["batch"].as_array().unwrap();
 
 			for item in items {
@@ -200,7 +270,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_concurrent_append_and_fetch() -> io::Result<()> {
+	fn test_concurrent_append_and_fetch() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key-append-and-fetch".to_string(), // Unique key
 			max_items: 1000,
@@ -226,8 +296,7 @@ mod tests {
 			let mut total_fetched = 0;
 			while total_fetched < 100 {
 				if let Ok(Some(result)) = db_fetch.fetch(Some(10), None) {
-					let batch: Value =
-						serde_json::from_slice(result.data.as_ref().unwrap()).unwrap();
+					let batch: Value = result.data.unwrap();
 					let items = batch["batch"].as_array().unwrap();
 					total_fetched += items.len();
 				}
@@ -248,7 +317,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_concurrent_reset() -> io::Result<()> {
+	fn test_concurrent_reset() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key-reset".to_string(), // Unique key
 			max_items: 1000,
@@ -288,8 +357,7 @@ mod tests {
 			let mut _fetch_count = 0;
 			for _ in 0..10 {
 				if let Ok(Some(result)) = db_fetch.fetch(None, None) {
-					let batch: Value =
-						serde_json::from_slice(result.data.as_ref().unwrap()).unwrap();
+					let batch: Value = result.data.unwrap();
 					let items = batch["batch"].as_array().unwrap();
 					_fetch_count += items.len();
 				}
@@ -310,7 +378,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_concurrent_directory_store() -> io::Result<()> {
+	fn test_concurrent_directory_store() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key-directory".to_string(),
@@ -344,7 +412,7 @@ mod tests {
 			let mut _total_files = 0;
 			for _ in 0..5 {
 				if let Ok(Some(result)) = db_fetch.fetch(None, None) {
-					if let Some(files) = result.data_files {
+					if let Some(files) = result.data {
 						_total_files += files.len();
 					}
 				}
@@ -383,7 +451,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_heavy_concurrent_load() -> io::Result<()> {
+	fn test_heavy_concurrent_load() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
 			max_items: 1_000_000,        // 1M items max
@@ -416,8 +484,7 @@ mod tests {
 				let mut total_items = 0;
 				loop {
 					if let Ok(Some(result)) = db.fetch(Some(1000), None) {
-						let batch: Value =
-							serde_json::from_slice(result.data.as_ref().unwrap()).unwrap();
+						let batch: Value = result.data.unwrap();
 						let items = batch["batch"].as_array().unwrap();
 						total_items += items.len();
 						if total_items > 10_000 {
@@ -449,7 +516,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_directory_store_stress() -> io::Result<()> {
+	fn test_directory_store_stress() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key".to_string(),
@@ -526,7 +593,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_memory_store_chaos() -> io::Result<()> {
+	fn test_memory_store_chaos() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
 			max_items: 100_000,
@@ -536,8 +603,6 @@ mod tests {
 		let store = MemoryStore::new(config);
 		let db = Arc::new(TransientDB::new(store));
 		let mut handles = vec![];
-
-		assert_eq!(db.transaction_type(), DataTransactionType::Data);
 
 		// Create a clone for final verification
 		let final_db = db.clone();
@@ -647,7 +712,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_directory_store_chaos() -> io::Result<()> {
+	fn test_directory_store_chaos() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key".to_string(),
@@ -659,8 +724,6 @@ mod tests {
 		let store = DirectoryStore::new(config)?;
 		let db = Arc::new(TransientDB::new(store));
 		let mut handles = vec![];
-
-		assert_eq!(db.transaction_type(), DataTransactionType::File);
 
 		// Evil JSON generator (same as before)
 		let generate_evil_json = |i: u64| -> Value {
@@ -755,7 +818,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_directory_store_malformed_files() -> io::Result<()> {
+	fn test_directory_store_malformed_files() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key".to_string(),
@@ -788,7 +851,7 @@ mod tests {
 
 		// Check if we can still fetch data
 		if let Some(result) = db.fetch(None, None)? {
-			if let Some(files) = result.data_files {
+			if let Some(files) = result.data {
 				assert!(!files.is_empty(), "Should have at least one file");
 
 				// Count valid files
@@ -811,7 +874,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_transient_db_panic_recovery() -> io::Result<()> {
+	fn test_transient_db_panic_recovery() -> Result<()> {
 		use std::panic::{catch_unwind, AssertUnwindSafe};
 
 		let config = MemoryConfig {
@@ -839,7 +902,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_directory_store_concurrent_validation() -> io::Result<()> {
+	fn test_directory_store_concurrent_validation() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key".to_string(),
@@ -947,7 +1010,7 @@ mod tests {
 
 		// Final fetch to verify data integrity
 		if let Some(result) = db.fetch(None, None)? {
-			if let Some(files) = result.data_files {
+			if let Some(files) = result.data {
 				// Verify file contents
 				let mut seen_events = HashSet::new();
 				for file in &files {

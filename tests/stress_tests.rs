@@ -3,8 +3,9 @@ use transientdb;
 use rand::Rng;
 use serde_json::json;
 use std::fs;
+use std::io::Result;
 use std::sync::Arc;
-use std::{io, thread};
+use std::thread;
 use tempfile::TempDir;
 use transientdb::TransientDB;
 use transientdb::{DirectoryConfig, DirectoryStore};
@@ -55,7 +56,7 @@ use transientdb::{MemoryConfig, MemoryStore};
 /// significant CPU resources while running.
 
 #[test]
-fn test_memory_store_stress() -> io::Result<()> {
+fn test_memory_store_stress() -> Result<()> {
 	use std::sync::atomic::{AtomicU64, Ordering};
 	use std::time::{Duration, Instant};
 
@@ -214,7 +215,7 @@ fn test_memory_store_stress() -> io::Result<()> {
 }
 
 #[test]
-fn test_directory_store_stress() -> io::Result<()> {
+fn test_directory_store_stress() -> Result<()> {
 	use std::sync::atomic::{AtomicU64, Ordering};
 	use std::time::{Duration, Instant};
 

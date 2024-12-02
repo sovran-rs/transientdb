@@ -1,6 +1,7 @@
 use transientdb;
 
 use serde_json::json;
+use std::io::Result;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use transientdb::TransientDB;
@@ -52,7 +53,7 @@ impl LatencyStats {
 }
 
 #[test]
-fn benchmark_memory_store() -> std::io::Result<()> {
+fn benchmark_memory_store() -> Result<()> {
 	println!("\n=== Memory Store Performance Test ===");
 
 	let config = MemoryConfig {
@@ -116,7 +117,7 @@ fn benchmark_memory_store() -> std::io::Result<()> {
 		while read_start.elapsed() < Duration::from_secs(5) {
 			let op_start = Instant::now();
 			if let Ok(Some(result)) = db.fetch(Some(batch_size), None) {
-				let batch: serde_json::Value = serde_json::from_slice(&result.data.unwrap())?;
+				let batch: serde_json::Value = result.data.unwrap();
 				let items = batch["batch"].as_array().unwrap();
 				total_events += items.len();
 				read_latencies.add(op_start.elapsed());
@@ -143,7 +144,7 @@ fn benchmark_memory_store() -> std::io::Result<()> {
 }
 
 #[test]
-fn benchmark_directory_store() -> std::io::Result<()> {
+fn benchmark_directory_store() -> Result<()> {
 	println!("\n=== Directory Store Performance Test ===");
 
 	let temp_dir = TempDir::new()?;
@@ -228,7 +229,7 @@ fn benchmark_directory_store() -> std::io::Result<()> {
 		while read_start.elapsed() < Duration::from_secs(5) {
 			let op_start = Instant::now();
 			if let Ok(Some(result)) = db.fetch(Some(batch_size), None) {
-				if let Some(files) = result.data_files {
+				if let Some(files) = result.data {
 					total_files += files.len();
 					read_latencies.add(op_start.elapsed());
 

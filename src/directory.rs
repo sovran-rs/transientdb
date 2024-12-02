@@ -1,8 +1,8 @@
-use crate::{DataResult, DataStore, DataTransactionType, Equivalent};
+use crate::{DataResult, DataStore, Equivalent};
 use chrono::Utc;
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Result, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -55,7 +55,7 @@ pub struct DirectoryStore {
 	writer: Option<BufWriter<File>>,
 	current_size: usize,
 	current_path: Option<PathBuf>,
-	file_validator: Option<Box<dyn Fn(&Path) -> io::Result<()> + Send + Sync>>,
+	file_validator: Option<Box<dyn Fn(&Path) -> Result<()> + Send + Sync>>,
 	next_index: AtomicU32,
 }
 
@@ -77,7 +77,7 @@ impl DirectoryStore {
 	///
 	/// # Panics
 	/// * If max_file_size is less than 100 bytes
-	pub fn new(config: DirectoryConfig) -> io::Result<Self> {
+	pub fn new(config: DirectoryConfig) -> Result<Self> {
 		if config.max_file_size < 100 {
 			panic!("Seriously? max_file_size < 100 bytes? What exactly do you expect to store in there?");
 		}
@@ -148,7 +148,7 @@ impl DirectoryStore {
 	/// ```
 	pub fn set_file_validator<F>(&mut self, validator: F)
 	where
-		F: Fn(&Path) -> io::Result<()> + 'static + Send + Sync,
+		F: Fn(&Path) -> Result<()> + 'static + Send + Sync,
 	{
 		self.file_validator = Some(Box::new(validator));
 	}
@@ -157,7 +157,7 @@ impl DirectoryStore {
 		self.next_index.fetch_add(1, Ordering::SeqCst)
 	}
 
-	fn start_file_if_needed(&mut self) -> io::Result<bool> {
+	fn start_file_if_needed(&mut self) -> Result<bool> {
 		if self.writer.is_some() {
 			return Ok(false);
 		}
@@ -208,7 +208,7 @@ impl DirectoryStore {
 		}
 	}
 
-	fn finish_file(&mut self) -> io::Result<()> {
+	fn finish_file(&mut self) -> Result<()> {
 		let _ = match self.writer.take() {
 			Some(mut writer) => {
 				// Changed writeln! to write! to avoid newline
@@ -240,7 +240,7 @@ impl DirectoryStore {
 		Ok(())
 	}
 
-	fn sorted_files(&self, include_unfinished: bool) -> io::Result<Vec<PathBuf>> {
+	fn sorted_files(&self, include_unfinished: bool) -> Result<Vec<PathBuf>> {
 		let mut files: Vec<PathBuf> = fs::read_dir(&self.config.storage_location)?
 			.filter_map(Result::ok)
 			.map(|e| e.path())
@@ -261,7 +261,7 @@ impl DirectoryStore {
 		Ok(files)
 	}
 
-	fn up_to_size(&self, max_bytes: usize, files: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
+	fn up_to_size(&self, max_bytes: usize, files: &[PathBuf]) -> Result<Vec<PathBuf>> {
 		let mut result = Vec::new();
 		let mut total_size: u64 = 0;
 
@@ -282,6 +282,8 @@ impl DirectoryStore {
 }
 
 impl DataStore for DirectoryStore {
+	type Output = Vec<PathBuf>;
+
 	fn has_data(&self) -> bool {
 		fs::read_dir(&self.config.storage_location)
 			.map(|entries| {
@@ -290,10 +292,6 @@ impl DataStore for DirectoryStore {
 				})
 			})
 			.unwrap_or(false)
-	}
-
-	fn transaction_type(&self) -> DataTransactionType {
-		DataTransactionType::File
 	}
 
 	fn reset(&mut self) {
@@ -307,7 +305,7 @@ impl DataStore for DirectoryStore {
 		}
 	}
 
-	fn append(&mut self, data: Value) -> io::Result<()> {
+	fn append(&mut self, data: Value) -> Result<()> {
 		let started = self.start_file_if_needed()?;
 		let writer = self
 			.writer
@@ -333,7 +331,7 @@ impl DataStore for DirectoryStore {
 		&mut self,
 		count: Option<usize>,
 		max_bytes: Option<usize>,
-	) -> io::Result<Option<DataResult>> {
+	) -> Result<Option<DataResult<Self::Output>>> {
 		if self.writer.is_some() {
 			self.finish_file()?;
 		}
@@ -358,13 +356,12 @@ impl DataStore for DirectoryStore {
 			.collect::<Vec<_>>();
 
 		Ok(Some(DataResult {
-			data: None,
-			data_files: Some(files),
+			data: Some(files),
 			removable: Some(removable),
 		}))
 	}
 
-	fn remove(&mut self, data: &[Box<dyn Equivalent>]) -> io::Result<()> {
+	fn remove(&mut self, data: &[Box<dyn Equivalent>]) -> Result<()> {
 		for item in data {
 			if let Some(path) = item.as_any().downcast_ref::<PathBuf>() {
 				if let Err(e) = fs::remove_file(path) {
@@ -382,10 +379,11 @@ mod tests {
 	use crate::DataStore;
 	use std::fs;
 	use std::io;
+	use std::io::Result;
 	use tempfile::TempDir;
 
 	#[test]
-	fn test_directory_store_basic_operations() -> io::Result<()> {
+	fn test_directory_store_basic_operations() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 
 		let config = DirectoryConfig {
@@ -409,8 +407,8 @@ mod tests {
 
 		// Force file completion
 		if let Some(result) = store.fetch(None, None)? {
-			assert!(result.data_files.is_some());
-			let files = result.data_files.unwrap();
+			assert!(result.data.is_some());
+			let files = result.data.unwrap();
 			assert_eq!(files.len(), 1);
 
 			// Verify file content
@@ -425,7 +423,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_file_rotation() -> io::Result<()> {
+	fn test_file_rotation() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 
 		let config = DirectoryConfig {
@@ -449,7 +447,7 @@ mod tests {
 
 		// Fetch all files
 		if let Some(result) = store.fetch(None, None)? {
-			let files = result.data_files.unwrap();
+			let files = result.data.unwrap();
 			assert!(files.len() > 1, "Expected multiple files due to size limit");
 
 			// Verify each file is properly formatted
@@ -473,7 +471,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_fetch_with_size_limit() -> io::Result<()> {
+	fn test_fetch_with_size_limit() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key".to_string(),
@@ -496,7 +494,7 @@ mod tests {
 
 		// Fetch with byte limit
 		if let Some(result) = store.fetch(None, Some(250))? {
-			let files = result.data_files.unwrap();
+			let files = result.data.unwrap();
 			let total_size: u64 = files.iter().map(|f| fs::metadata(f).unwrap().len()).sum();
 			assert!(total_size <= 250, "Fetch exceeded size limit");
 		}
@@ -505,7 +503,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_file_cleanup() -> io::Result<()> {
+	fn test_file_cleanup() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key".to_string(),
@@ -522,7 +520,7 @@ mod tests {
 
 		// Fetch and then remove
 		if let Some(result) = store.fetch(None, None)? {
-			let files = result.data_files.unwrap();
+			let files = result.data.unwrap();
 			let removable = result.removable.unwrap();
 
 			// Verify files exist
@@ -543,7 +541,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_file_validator() -> io::Result<()> {
+	fn test_file_validator() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key".to_string(),
@@ -574,7 +572,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_fetch_limits() -> io::Result<()> {
+	fn test_fetch_limits() -> Result<()> {
 		let temp_dir = TempDir::new()?;
 		let config = DirectoryConfig {
 			write_key: "test-key".to_string(),
@@ -597,20 +595,20 @@ mod tests {
 
 		// Test count limit only
 		if let Some(result) = store.fetch(Some(3), None)? {
-			let files = result.data_files.unwrap();
+			let files = result.data.unwrap();
 			assert_eq!(files.len(), 3, "Count limit not respected");
 		}
 
 		// Test byte limit only
 		if let Some(result) = store.fetch(None, Some(250))? {
-			let files = result.data_files.unwrap();
+			let files = result.data.unwrap();
 			let total_size: u64 = files.iter().map(|f| fs::metadata(f).unwrap().len()).sum();
 			assert!(total_size <= 250, "Byte limit not respected");
 		}
 
 		// Test both count and byte limits
 		if let Some(result) = store.fetch(Some(5), Some(200))? {
-			let files = result.data_files.unwrap();
+			let files = result.data.unwrap();
 			assert!(
 				files.len() <= 5,
 				"Count limit not respected in combined test"

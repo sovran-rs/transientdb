@@ -1,8 +1,8 @@
-use crate::{DataResult, DataStore, DataTransactionType, Equivalent};
+use crate::{DataResult, DataStore, Equivalent};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::io;
+use std::io::Result;
 
 /// Configuration options for the in-memory data store.
 ///
@@ -92,19 +92,17 @@ impl MemoryStore {
 }
 
 impl DataStore for MemoryStore {
+	type Output = Value;
+
 	fn has_data(&self) -> bool {
 		!self.items.is_empty()
-	}
-
-	fn transaction_type(&self) -> DataTransactionType {
-		DataTransactionType::Data
 	}
 
 	fn reset(&mut self) {
 		self.items.clear();
 	}
 
-	fn append(&mut self, data: Value) -> io::Result<()> {
+	fn append(&mut self, data: Value) -> Result<()> {
 		self.items.push_back(data);
 
 		while self.items.len() > self.config.max_items {
@@ -118,12 +116,11 @@ impl DataStore for MemoryStore {
 		&mut self,
 		count: Option<usize>,
 		max_bytes: Option<usize>,
-	) -> io::Result<Option<DataResult>> {
+	) -> Result<Option<DataResult<Self::Output>>> {
 		let max_bytes = max_bytes.unwrap_or(self.config.max_fetch_size);
 		let mut accumulated_size = 0;
 		let mut num_items = 0;
 
-		// Use a single pass to determine how many items we can take
 		{
 			let items_iter = self.items.iter();
 			for item in items_iter {
@@ -145,23 +142,20 @@ impl DataStore for MemoryStore {
 			return Ok(None);
 		}
 
-		// Now drain in a single operation
 		let items: Vec<Value> = self.items.drain(0..num_items).collect();
 		if items.is_empty() {
 			return Ok(None);
 		}
 
 		let batch = self.create_batch(&items);
-		let batch_data = serde_json::to_vec(&batch)?;
 
 		Ok(Some(DataResult {
-			data: Some(batch_data),
-			data_files: None,
+			data: Some(batch),
 			removable: None,
 		}))
 	}
 
-	fn remove(&mut self, _data: &[Box<dyn Equivalent>]) -> io::Result<()> {
+	fn remove(&mut self, _data: &[Box<dyn Equivalent>]) -> Result<()> {
 		// No-op since fetch already removes the items
 		Ok(())
 	}
@@ -172,10 +166,10 @@ mod tests {
 	use crate::memory::{MemoryConfig, MemoryStore};
 	use crate::DataStore;
 	use serde_json::{json, Value};
-	use std::io;
+	use std::io::Result;
 
 	#[test]
-	fn test_basic_operations() -> io::Result<()> {
+	fn test_basic_operations() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
 			max_items: 1000,
@@ -194,7 +188,7 @@ mod tests {
 
 		// Test fetch
 		if let Some(result) = store.fetch(None, None)? {
-			let batch: Value = serde_json::from_slice(&result.data.unwrap())?;
+			let batch: Value = result.data.unwrap();
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(items.len(), 1);
 			assert_eq!(items[0]["value"], 123);
@@ -209,7 +203,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_fifo_behavior() -> io::Result<()> {
+	fn test_fifo_behavior() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
 			max_items: 3, // Small limit to test FIFO
@@ -228,7 +222,7 @@ mod tests {
 
 		// Verify they're the right items (2,3,4)
 		if let Some(result) = store.fetch(None, None)? {
-			let batch: Value = serde_json::from_slice(&result.data.unwrap())?;
+			let batch: Value = result.data.unwrap();
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(items.len(), 3);
 			assert_eq!(items[0]["index"], 2);
@@ -240,7 +234,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_fetch_limits() -> io::Result<()> {
+	fn test_fetch_limits() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
 			max_items: 100,
@@ -260,7 +254,7 @@ mod tests {
 
 		// Test count limit
 		if let Some(result) = store.fetch(Some(3), None)? {
-			let batch: Value = serde_json::from_slice(result.data.as_ref().unwrap())?;
+			let batch: Value = result.data.unwrap();
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(items.len(), 3, "Count limit not respected");
 		}
@@ -276,7 +270,7 @@ mod tests {
 
 		// Test byte limit (200 bytes should get us about 2-3 items)
 		if let Some(result) = store.fetch(None, Some(200))? {
-			let items = serde_json::from_slice::<Value>(result.data.as_ref().unwrap())?;
+			let items = result.data.unwrap();
 			let items = items["batch"].as_array().unwrap();
 			assert!(items.len() <= 3, "Too many items for byte limit");
 
@@ -292,7 +286,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_reset() -> io::Result<()> {
+	fn test_reset() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
 			max_items: 100,
@@ -316,7 +310,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_memory_store_max_fetch_size_edge_cases() -> io::Result<()> {
+	fn test_memory_store_max_fetch_size_edge_cases() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
 			max_items: 100,
@@ -336,7 +330,7 @@ mod tests {
 
 		// First fetch should only get the small item
 		if let Some(result) = store.fetch(None, None)? {
-			let batch: Value = serde_json::from_slice(&result.data.unwrap())?;
+			let batch: Value = result.data.unwrap();
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(items.len(), 1, "Should only fetch the small item");
 			assert_eq!(items[0]["type"], "small");
@@ -344,7 +338,7 @@ mod tests {
 
 		// Second fetch should get the large item
 		if let Some(result) = store.fetch(None, None)? {
-			let batch: Value = serde_json::from_slice(&result.data.unwrap())?;
+			let batch: Value = result.data.unwrap();
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(items.len(), 1, "Should fetch the large item");
 			assert_eq!(items[0]["type"], "large");
@@ -354,7 +348,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_memory_store_json_types() -> io::Result<()> {
+	fn test_memory_store_json_types() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
 			max_items: 100,
@@ -373,7 +367,7 @@ mod tests {
 		store.append(json!({"key": "value"}))?;
 
 		if let Some(result) = store.fetch(None, None)? {
-			let batch: Value = serde_json::from_slice(&result.data.unwrap())?;
+			let batch: Value = result.data.unwrap();
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(
 				items.len(),

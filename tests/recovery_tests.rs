@@ -2,7 +2,7 @@ use rand::seq::IteratorRandom;
 use rand::Rng;
 use serde_json::json;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Result, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use transientdb::TransientDB;
 use transientdb::{DirectoryConfig, DirectoryStore};
 
 // Helper to corrupt a file in various ways
-fn corrupt_file(path: &Path, corruption_type: u8) -> io::Result<()> {
+fn corrupt_file(path: &Path, corruption_type: u8) -> Result<()> {
 	match corruption_type {
 		0 => {
 			// Truncate file mid-json
@@ -44,7 +44,7 @@ fn corrupt_file(path: &Path, corruption_type: u8) -> io::Result<()> {
 }
 
 #[test]
-fn test_recovery_from_corrupted_files() -> io::Result<()> {
+fn test_recovery_from_corrupted_files() -> Result<()> {
 	let temp_dir = TempDir::new()?;
 	let config = DirectoryConfig {
 		write_key: "test-key".to_string(),
@@ -77,7 +77,7 @@ fn test_recovery_from_corrupted_files() -> io::Result<()> {
 	db.append(json!({"after_corruption": true}))?;
 
 	if let Some(result) = db.fetch(None, None)? {
-		if let Some(files) = result.data_files {
+		if let Some(files) = result.data {
 			// Should still get some valid files
 			assert!(!files.is_empty(), "Should have at least valid files");
 		}
@@ -87,7 +87,7 @@ fn test_recovery_from_corrupted_files() -> io::Result<()> {
 }
 
 #[test]
-fn test_concurrent_corruption_recovery() -> io::Result<()> {
+fn test_concurrent_corruption_recovery() -> Result<()> {
 	let temp_dir = TempDir::new()?;
 	let config = DirectoryConfig {
 		write_key: "test-key".to_string(),
@@ -149,7 +149,7 @@ fn test_concurrent_corruption_recovery() -> io::Result<()> {
 }
 
 #[test]
-fn test_file_system_edge_cases() -> io::Result<()> {
+fn test_file_system_edge_cases() -> Result<()> {
 	let temp_dir = TempDir::new()?;
 	let config = DirectoryConfig {
 		write_key: "test-key".to_string(),
