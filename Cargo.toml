@@ -1,6 +1,6 @@
 
 [package]
-name = "transient_store"
+name = "transientdb"
 version = "0.1.0"
 edition = "2021"
 
