@@ -106,17 +106,17 @@ jobs:
           - target: aarch64-apple-ios-sim
             sdk: iphonesimulator
             platform: iOS
-            runtime: ios
+            runtime: iOS-17-0
             device: iPhone 14
           - target: aarch64-apple-tvos-sim
             sdk: appletvsimulator
             platform: tvOS
-            runtime: tvos
+            runtime: tvOS-17-0
             device: Apple TV
           - target: aarch64-apple-xros-sim
             sdk: xrsimulator
             platform: visionOS
-            runtime: xros
+            runtime: visionOS-1-0
             device: Apple Vision Pro
     steps:
       - uses: actions/checkout@v4
@@ -133,8 +133,18 @@ jobs:
 
       - name: Run tests
         run: |
+          # List available runtimes for debugging
+          xcrun simctl list runtimes
+          
           # Create and boot simulator
-          DEVICE_ID=$(xcrun simctl create test-device "${{ matrix.device }}" "com.apple.CoreSimulator.SimRuntime.${{ matrix.runtime }}")
+          RUNTIME_ID=$(xcrun simctl list runtimes -j | jq -r '.runtimes[] | select(.name | contains("${{ matrix.runtime }}")) | .identifier')
+          if [ -z "$RUNTIME_ID" ]; then
+            echo "No runtime found matching ${{ matrix.runtime }}"
+            exit 1
+          fi
+          
+          echo "Using runtime: $RUNTIME_ID"
+          DEVICE_ID=$(xcrun simctl create test-device "${{ matrix.device }}" "$RUNTIME_ID")
           xcrun simctl boot "${DEVICE_ID}"
           
           # Get the test binary path
