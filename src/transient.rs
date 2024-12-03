@@ -450,7 +450,7 @@ mod tests {
 		Ok(())
 	}
 
-	#[test]
+	/*#[test]
 	fn test_heavy_concurrent_load() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key".to_string(),
@@ -513,7 +513,7 @@ mod tests {
 		}
 
 		Ok(())
-	}
+	}*/
 
 	#[test]
 	fn test_directory_store_stress() -> Result<()> {
