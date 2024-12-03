@@ -212,7 +212,7 @@ mod tests {
 	fn test_concurrent_appends() -> Result<()> {
 		let config = MemoryConfig {
 			write_key: "test-key-concurrent-appends".to_string(), // Unique key
-			max_items: 2000,
+			max_items: 10000,
 			max_fetch_size: 1024,
 		};
 		let store = MemoryStore::new(config);
