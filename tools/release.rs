@@ -44,25 +44,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let previous_tag = get_latest_tag()?;
     let commit_history = get_commit_history(&previous_tag)?;
 
-    // Git commands for version bump
-    let initial_commands = [
-        ("git add Cargo.toml", "Failed to stage Cargo.toml"),
-        (&format!("git commit -m \"Bump version to {}\"", new_version), "Failed to commit version bump"),
-        ("git push", "Failed to push commits"),
-    ];
-
-    // Execute initial commands
-    for (cmd, error_msg) in initial_commands.iter() {
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .status()?;
-
-        if !status.success() {
-            return Err(error_msg.to_string().into());
-        }
-    }
-
     // Build in release mode to update Cargo.lock
     let build_status = Command::new("cargo")
         .args(&["build", "--release"])
@@ -72,18 +53,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Failed to build release version".into());
     }
 
-    // Commit Cargo.lock changes
-    let lock_commands = [
-        ("git add Cargo.lock", "Failed to stage Cargo.lock"),
-        ("git commit -m \"Update Cargo.lock for release\"", "Failed to commit Cargo.lock"),
-        ("git push", "Failed to push Cargo.lock changes"),
-        // Tag is now here, after all changes are committed and pushed
+    // Git commands for version bump with combined commit
+    let release_commands = [
+        ("git add Cargo.toml Cargo.lock", "Failed to stage files"),
+        (&format!("git commit -m \"Release version {}\"", new_version), "Failed to commit version bump"),
+        ("git push", "Failed to push commits"),
         (&format!("git tag -a v{} -m \"Version {}\"", new_version, new_version), "Failed to create tag"),
         ("git push --tags", "Failed to push tags"),
     ];
 
-    // Execute lock file commands
-    for (cmd, error_msg) in lock_commands.iter() {
+    // Execute release commands
+    for (cmd, error_msg) in release_commands.iter() {
         let status = Command::new("sh")
             .arg("-c")
             .arg(cmd)
