@@ -48,9 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let initial_commands = [
         ("git add Cargo.toml", "Failed to stage Cargo.toml"),
         (&format!("git commit -m \"Bump version to {}\"", new_version), "Failed to commit version bump"),
-        (&format!("git tag -a v{} -m \"Version {}\"", new_version, new_version), "Failed to create tag"),
         ("git push", "Failed to push commits"),
-        ("git push --tags", "Failed to push tags"),
     ];
 
     // Execute initial commands
@@ -79,6 +77,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("git add Cargo.lock", "Failed to stage Cargo.lock"),
         ("git commit -m \"Update Cargo.lock for release\"", "Failed to commit Cargo.lock"),
         ("git push", "Failed to push Cargo.lock changes"),
+        // Tag is now here, after all changes are committed and pushed
+        (&format!("git tag -a v{} -m \"Version {}\"", new_version, new_version), "Failed to create tag"),
+        ("git push --tags", "Failed to push tags"),
     ];
 
     // Execute lock file commands
