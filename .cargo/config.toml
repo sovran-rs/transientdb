@@ -1,0 +1,8 @@
+[target.aarch64-apple-ios]
+rustflags = ["-C", "link-arg=-mios-version-min=12.0"]
+
+[target.aarch64-apple-tvos]
+rustflags = ["-C", "link-arg=-mtvos-version-min=12.0"]
+
+[target.aarch64-apple-xros]
+rustflags = ["-C", "link-arg=-mxros-version-min=1.0"]

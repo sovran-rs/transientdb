@@ -1,0 +1,230 @@
+name: TransientDB CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allows manual triggering
+    inputs:
+      run_stress_tests:
+        description: 'Run stress tests'
+        required: true
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      # Check everything builds
+      - name: Check main build
+        run: cargo check --all-features
+
+      # Check formatting
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # Run clippy
+      - name: Check lints
+        run: cargo clippy --all-features -- -D warnings
+
+      # Run unit tests
+      - name: Run unit tests
+        run: cargo test --all-features --lib
+
+      # Check docs build
+      - name: Check docs
+        run: cargo doc --no-deps
+
+  doc-tests:
+    name: Doc Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run doc tests
+        run: cargo test --doc
+
+  msrv:
+    name: MSRV Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Check builds with minimum supported Rust version
+        run: cargo check --all-features
+
+  integration-tests:
+    name: Integration Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run integration tests
+        shell: bash
+        run: |
+          # Run all tests in the tests directory with increased thread stack size
+          RUST_MIN_STACK=8388608 cargo test --test '*'
+
+  apple-simulators:
+    name: Apple Tests - ${{ matrix.platform }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-ios-sim
+            sdk: iphonesimulator
+            platform: iOS
+            runtime: com.apple.CoreSimulator.SimRuntime.iOS-17-4
+            device: iPhone 14
+            use_simulator: true
+          - target: aarch64-apple-tvos-sim
+            sdk: appletvsimulator
+            platform: tvOS
+            runtime: com.apple.CoreSimulator.SimRuntime.tvOS-17-4
+            device: Apple TV
+            use_simulator: true
+          - target: aarch64-apple-visionos-sim
+            sdk: xrsimulator
+            platform: visionOS
+            runtime: com.apple.CoreSimulator.SimRuntime.xrOS-1-1
+            device: Apple Vision Pro
+            use_simulator: true
+          - target: aarch64-apple-ios-macabi
+            sdk: macosxsim
+            platform: Mac Catalyst
+            use_simulator: false
+          - target: aarch64-apple-watchos-sim
+            sdk: watchsimulator
+            platform: watchOS
+            runtime: com.apple.CoreSimulator.SimRuntime.watchOS-10-4
+            device: Apple Watch Series 9 (45mm)
+            use_simulator: true
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install toolchains based on target
+      - name: Install Rust 1.83.0
+        if: matrix.target == 'aarch64-apple-ios-sim' || matrix.target == 'aarch64-apple-ios-macabi'
+        uses: dtolnay/rust-toolchain@1.83.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Rust Nightly
+        if: matrix.target != 'aarch64-apple-ios-sim' && matrix.target != 'aarch64-apple-ios-macabi'
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build and Test
+        run: |
+          if [[ "${{ matrix.target }}" == "aarch64-apple-ios-sim" || "${{ matrix.target }}" == "aarch64-apple-ios-macabi" ]]; then
+            echo "=== Building with stable toolchain ==="
+            cargo test --no-run --target ${{ matrix.target }}
+          else
+            echo "=== Building with nightly toolchain and build-std ==="
+            cargo +nightly test --no-run -Zbuild-std=std,panic_abort --target ${{ matrix.target }}
+          fi
+          
+          # Debug: Show directory structure
+          echo "=== Directory structure ==="
+          ls -la target/${{ matrix.target }}/debug/deps/
+          
+          # Get the test binary path
+          echo "=== Locating test binary ==="
+          TEST_BINARY=$(find target/${{ matrix.target }}/debug/deps -type f -perm +111 -name "transientdb-*" ! -name "*.d" ! -name "*.rlib" ! -name "*.rmeta" ! -name "*.o")
+          echo "Test binary path: ${TEST_BINARY}"
+          
+          # Verify binary exists and is executable
+          ls -l "${TEST_BINARY}"
+          
+          if [[ "${{ matrix.use_simulator }}" == "true" ]]; then
+            # Create and boot simulator
+            echo "=== Creating simulator ==="
+            DEVICE_ID=$(xcrun simctl create test-device "${{ matrix.device }}" "${{ matrix.runtime }}")
+            echo "Device ID: ${DEVICE_ID}"
+          
+            echo "=== Booting simulator ==="
+            xcrun simctl boot "${DEVICE_ID}"
+          
+            # Run tests in simulator
+            echo "=== Running tests in simulator ==="
+            RUST_MIN_STACK=8388608 RUST_BACKTRACE=1 xcrun simctl spawn "${DEVICE_ID}" "${TEST_BINARY}"
+          
+            # Cleanup simulator
+            echo "=== Cleanup ==="
+            xcrun simctl shutdown "${DEVICE_ID}"
+            xcrun simctl delete "${DEVICE_ID}"
+          else
+            # Run Mac Catalyst tests directly
+            echo "=== Running Mac Catalyst tests ==="
+            RUST_MIN_STACK=8388608 RUST_BACKTRACE=1 "${TEST_BINARY}"
+          fi
+
+  android-cross:
+    name: Android Tests - ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: '--cfg using_cross'
+      RUSTDOCFLAGS: '--cfg using_cross'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: armv7-linux-androideabi
+            platform: ARM32
+          - target: aarch64-linux-android
+            platform: ARM64
+          - target: x86_64-linux-android
+            platform: x86_64
+          - target: i686-linux-android
+            platform: x86
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo install cross --git https://github.com/cross-rs/cross
+
+      # Check everything builds
+      - name: Check main build
+        run: cross check --target=${{ matrix.target }} --all-features
+
+      # Run unit tests
+      - name: Run unit tests
+        run: cross test --target=${{ matrix.target }} --all-features --lib
