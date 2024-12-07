@@ -29,7 +29,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_str()
         .expect("Could not find version in Cargo.toml");
 
-    // Rest of the code remains the same...
     // Ask for new version
     println!("Current version is: {}", current_version);
     println!("Enter new version:");
@@ -45,17 +44,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let previous_tag = get_latest_tag()?;
     let commit_history = get_commit_history(&previous_tag)?;
 
-    // Git commands
-    let commands = [
+    // Git commands for version bump
+    let initial_commands = [
         ("git add Cargo.toml", "Failed to stage Cargo.toml"),
         (&format!("git commit -m \"Bump version to {}\"", new_version), "Failed to commit version bump"),
         (&format!("git tag -a v{} -m \"Version {}\"", new_version, new_version), "Failed to create tag"),
         ("git push", "Failed to push commits"),
         ("git push --tags", "Failed to push tags"),
-        ("cargo publish", "Failed to publish to crates.io"),
     ];
 
-    for (cmd, error_msg) in commands.iter() {
+    // Execute initial commands
+    for (cmd, error_msg) in initial_commands.iter() {
         let status = Command::new("sh")
             .arg("-c")
             .arg(cmd)
@@ -64,6 +63,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !status.success() {
             return Err(error_msg.to_string().into());
         }
+    }
+
+    // Build in release mode to update Cargo.lock
+    let build_status = Command::new("cargo")
+        .args(&["build", "--release"])
+        .status()?;
+
+    if !build_status.success() {
+        return Err("Failed to build release version".into());
+    }
+
+    // Commit Cargo.lock changes
+    let lock_commands = [
+        ("git add Cargo.lock", "Failed to stage Cargo.lock"),
+        ("git commit -m \"Update Cargo.lock for release\"", "Failed to commit Cargo.lock"),
+        ("git push", "Failed to push Cargo.lock changes"),
+    ];
+
+    // Execute lock file commands
+    for (cmd, error_msg) in lock_commands.iter() {
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .status()?;
+
+        if !status.success() {
+            return Err(error_msg.to_string().into());
+        }
+    }
+
+    // Publish to crates.io
+    let publish_status = Command::new("cargo")
+        .arg("publish")
+        .status()?;
+
+    if !publish_status.success() {
+        return Err("Failed to publish to crates.io".into());
     }
 
     // Create GitHub release
