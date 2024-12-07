@@ -21,6 +21,7 @@ use std::io::Result;
 ///
 /// let store = MemoryStore::new(config);
 /// ```
+#[derive(Clone)]
 pub struct MemoryConfig {
 	/// Key used to identify writes to this store.
 	/// This is included in the metadata of each batch of data fetched from the store.

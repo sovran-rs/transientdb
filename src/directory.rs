@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 ///     max_file_size: 1024 * 1024, // 1MB
 /// };
 /// ```
+#[derive(Clone)]
 pub struct DirectoryConfig {
 	/// Key used to identify writes to this store.
 	/// This is included in the metadata of each data file created by the store.
@@ -87,28 +88,20 @@ impl DirectoryStore {
 
 		fs::create_dir_all(&config.storage_location)?;
 
-		// Initialize next_index by scanning existing files
-		let mut max_index = 0;
-		let files = fs::read_dir(&config.storage_location)?;
-		for entry in files {
-			let entry = entry?;
-			if let Ok(file_name) = entry.file_name().into_string() {
-				if let Some(index_str) = file_name.split('-').next() {
-					if let Ok(index) = index_str.parse::<u32>() {
-						max_index = max_index.max(index);
-					}
-				}
-			}
-		}
-
-		Ok(DirectoryStore {
+		let store = DirectoryStore {
 			config,
 			writer: None,
 			current_size: 0,
 			current_path: None,
 			file_validator: None,
-			next_index: AtomicU32::new(max_index + 1),
-		})
+			next_index: AtomicU32::new(0),
+		};
+
+		// Initialize directory and get max index
+		let max_index = store.initialize_directory()?;
+		store.next_index.store(max_index + 1, Ordering::SeqCst);
+
+		Ok(store)
 	}
 
 	/// Sets a validator function that will be called before finalizing each data file.
@@ -211,32 +204,79 @@ impl DirectoryStore {
 		}
 	}
 
+	/// Scans the directory for existing files, finalizes unfinished ones, and returns the highest index found
+	fn initialize_directory(&self) -> Result<u32> {
+		let entries = fs::read_dir(&self.config.storage_location)?;
+		let mut max_index = 0;
+
+		for entry in entries {
+			let entry = entry?;
+			let path = entry.path();
+
+			if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+				// Extract index from filename
+				if let Some(index_str) = file_name.split('-').next() {
+					if let Ok(index) = index_str.parse::<u32>() {
+						max_index = max_index.max(index);
+
+						// If file doesn't have .temp extension, it's unfinished
+						if path.extension().and_then(|ext| ext.to_str())
+							!= Some(Self::TEMP_EXTENSION)
+						{
+							// Attempt to finalize the file
+							if let Err(e) = self.finalize_file(&path) {
+								eprintln!("Failed to finalize file {:?}: {}", path, e);
+								// Continue processing other files even if this one fails
+							}
+						}
+					}
+				}
+			}
+		}
+
+		Ok(max_index)
+	}
+
+	/// Finalizes a file by completing the JSON structure and renaming with .temp extension
+	fn finalize_file(&self, path: &Path) -> Result<()> {
+		{
+			let mut file = OpenOptions::new().append(true).open(path)?;
+			write!(
+				file,
+				"],\"sentAt\":\"{}\",\"writeKey\":\"{}\"}}",
+				Utc::now().to_rfc3339(),
+				self.config.write_key
+			)?;
+			file.flush()?;
+		}
+
+		// Run validation if configured
+		if let Some(validator) = &self.file_validator {
+			validator(path)?;
+		}
+
+		// Rename to .temp to mark as complete
+		let new_path = path.with_extension(Self::TEMP_EXTENSION);
+		fs::rename(path, new_path)?;
+
+		Ok(())
+	}
+
 	fn finish_file(&mut self) -> Result<()> {
-		let _ = match self.writer.take() {
+		let writer = match self.writer.take() {
 			Some(mut writer) => {
-				// Changed writeln! to write! to avoid newline
-				write!(
-					writer,
-					"],\"sentAt\":\"{}\",\"writeKey\":\"{}\"}}",
-					Utc::now().to_rfc3339(),
-					self.config.write_key
-				)?;
 				writer.flush()?;
 				writer
 			}
 			None => return Ok(()),
 		};
 
+		// Drop the writer to close the file
+		drop(writer);
+
 		// Use the stored path
 		if let Some(current_path) = self.current_path.take() {
-			// Run validation if configured
-			if let Some(validator) = &self.file_validator {
-				validator(&current_path)?;
-			}
-
-			// Rename to .temp to mark as complete
-			let new_path = current_path.with_extension(Self::TEMP_EXTENSION);
-			fs::rename(current_path, new_path)?;
+			self.finalize_file(&current_path)?;
 		}
 
 		self.current_size = 0;
@@ -380,6 +420,8 @@ impl DataStore for DirectoryStore {
 mod tests {
 	use super::{DirectoryConfig, DirectoryStore};
 	use crate::DataStore;
+	use serde_json::json;
+	use serde_json::Value;
 	use std::fs;
 	use std::io;
 	use std::io::Result;
@@ -421,6 +463,74 @@ mod tests {
 		} else {
 			panic!("Expected data but got none");
 		}
+
+		Ok(())
+	}
+
+	#[test]
+	fn test_recovers_unfinished_files() -> Result<()> {
+		let temp_dir = TempDir::new()?;
+
+		// Create initial store instance
+		let config = DirectoryConfig {
+			write_key: "test-key".to_string(),
+			storage_location: temp_dir.path().to_owned(),
+			base_filename: "events".to_string(),
+			max_file_size: 1024,
+		};
+
+		// First store instance - create some unfinished files
+		{
+			let mut store = DirectoryStore::new(config.clone())?;
+
+			// Add some entries but don't finish_file()
+			store.append(json!({"event": "test1", "value": 123}))?;
+			store.append(json!({"event": "test2", "value": 456}))?;
+
+			// Let store drop without explicit finish
+		}
+
+		// Create a finished file to ensure we don't touch it
+		{
+			let mut store = DirectoryStore::new(config.clone())?;
+			store.append(json!({"event": "finished", "value": 789}))?;
+			store.finish_file()?; // Explicitly finish this one
+		}
+
+		// Create new store instance which should trigger recovery
+		let mut store = DirectoryStore::new(config)?;
+
+		// Verify we can read all the data
+		if let Some(result) = store.fetch(None, None)? {
+			let files = result.data.unwrap();
+			assert!(!files.is_empty(), "Should have recovered files");
+
+			// Read and verify contents of all files
+			for path in files {
+				let content = fs::read_to_string(&path)?;
+				let json: Value = serde_json::from_str(&content)?;
+
+				// Verify structure
+				assert!(json.get("batch").is_some(), "Should have batch field");
+				assert!(json.get("sentAt").is_some(), "Should have sentAt field");
+				assert_eq!(
+					json.get("writeKey").and_then(Value::as_str),
+					Some("test-key"),
+					"Should have correct writeKey"
+				);
+
+				// All files should have .temp extension now
+				assert_eq!(
+					path.extension().and_then(|ext| ext.to_str()),
+					Some("temp"),
+					"All files should be finalized"
+				);
+			}
+		}
+
+		// Verify we can still append new data
+		store.append(json!({"event": "new", "value": 999}))?;
+		store.finish_file()?;
 
 		Ok(())
 	}
