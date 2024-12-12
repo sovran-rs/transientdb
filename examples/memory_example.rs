@@ -20,16 +20,16 @@ fn memory_store_example() -> Result<()> {
 	println!("Adding user events...");
 	for i in 0..5 {
 		let event = json!({
-            "event_type": "page_view",
-            "user_id": format!("user_{}", i),
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "page": format!("/product/{}", i),
-            "metadata": {
-                "browser": "Chrome",
-                "platform": "macOS",
-                "screen_size": "1920x1080"
-            }
-        });
+			"event_type": "page_view",
+			"user_id": format!("user_{}", i),
+			"timestamp": chrono::Utc::now().to_rfc3339(),
+			"page": format!("/product/{}", i),
+			"metadata": {
+				"browser": "Chrome",
+				"platform": "macOS",
+				"screen_size": "1920x1080"
+			}
+		});
 
 		db.append(event)?;
 		thread::sleep(Duration::from_millis(100)); // Simulate time between events
