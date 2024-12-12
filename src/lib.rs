@@ -6,7 +6,6 @@ use serde_json::Value;
 use std::any::Any;
 use std::fmt::Debug;
 use std::io::Result;
-use std::path::PathBuf;
 
 pub use directory::{DirectoryConfig, DirectoryStore};
 pub use memory::{MemoryConfig, MemoryStore};
@@ -67,18 +66,4 @@ pub trait DataStore {
 	/// # Arguments
 	/// * `data` - Slice of removable items from a previous fetch operation
 	fn remove(&mut self, data: &[Box<dyn Equivalent>]) -> Result<()>;
-}
-
-impl Equivalent for PathBuf {
-	fn equals(&self, other: &dyn Equivalent) -> bool {
-		if let Some(other_path) = other.as_any().downcast_ref::<PathBuf>() {
-			self == other_path
-		} else {
-			false
-		}
-	}
-
-	fn as_any(&self) -> &dyn Any {
-		self
-	}
 }

@@ -1,10 +1,25 @@
 use crate::{DataResult, DataStore, Equivalent};
 use chrono::Utc;
 use serde_json::Value;
+use std::any::Any;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Result, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+
+impl Equivalent for PathBuf {
+	fn equals(&self, other: &dyn Equivalent) -> bool {
+		if let Some(other_path) = other.as_any().downcast_ref::<PathBuf>() {
+			self == other_path
+		} else {
+			false
+		}
+	}
+
+	fn as_any(&self) -> &dyn Any {
+		self
+	}
+}
 
 /// Configuration options for the file-based data store.
 ///

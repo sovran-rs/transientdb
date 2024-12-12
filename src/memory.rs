@@ -1,8 +1,23 @@
 use crate::{DataResult, DataStore, Equivalent};
 use serde_json::json;
 use serde_json::Value;
+use std::any::Any;
 use std::collections::VecDeque;
 use std::io::Result;
+
+impl Equivalent for Value {
+	fn equals(&self, other: &dyn Equivalent) -> bool {
+		if let Some(other_value) = other.as_any().downcast_ref::<Value>() {
+			self == other_value
+		} else {
+			false
+		}
+	}
+
+	fn as_any(&self) -> &dyn Any {
+		self
+	}
+}
 
 /// Configuration options for the in-memory data store.
 ///
@@ -122,42 +137,45 @@ impl DataStore for MemoryStore {
 		let mut accumulated_size = 0;
 		let mut num_items = 0;
 
-		{
-			let items_iter = self.items.iter();
-			for item in items_iter {
-				let item_size = Self::get_item_size(item);
-				if accumulated_size + item_size > max_bytes {
+		// Just look at items without draining
+		for item in self.items.iter() {
+			let item_size = Self::get_item_size(item);
+			if accumulated_size + item_size > max_bytes {
+				break;
+			}
+			if let Some(count) = count {
+				if num_items >= count {
 					break;
 				}
-				if let Some(count) = count {
-					if num_items >= count {
-						break;
-					}
-				}
-				accumulated_size += item_size;
-				num_items += 1;
 			}
+			accumulated_size += item_size;
+			num_items += 1;
 		}
 
 		if num_items == 0 {
 			return Ok(None);
 		}
 
-		let items: Vec<Value> = self.items.drain(0..num_items).collect();
-		if items.is_empty() {
-			return Ok(None);
-		}
+		// Create vectors of items and removable references
+		let items: Vec<Value> = self.items.iter().take(num_items).cloned().collect();
+
+		let removable: Vec<Box<dyn Equivalent>> = items
+			.iter()
+			.map(|item| Box::new(item.clone()) as Box<dyn Equivalent>)
+			.collect();
 
 		let batch = self.create_batch(&items);
 
 		Ok(Some(DataResult {
 			data: Some(batch),
-			removable: None,
+			removable: Some(removable),
 		}))
 	}
 
-	fn remove(&mut self, _data: &[Box<dyn Equivalent>]) -> Result<()> {
-		// No-op since fetch already removes the items
+	fn remove(&mut self, data: &[Box<dyn Equivalent>]) -> Result<()> {
+		// Remove items that match the provided equivalents
+		self.items
+			.retain(|item| !data.iter().any(|removable| removable.equals(item)));
 		Ok(())
 	}
 }
@@ -187,15 +205,24 @@ mod tests {
 		store.append(event.clone())?;
 		assert!(store.has_data());
 
-		// Test fetch
+		// Test fetch - data should still be there after fetch
 		if let Some(result) = store.fetch(None, None)? {
 			let batch: Value = result.data.unwrap();
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(items.len(), 1);
 			assert_eq!(items[0]["value"], 123);
 
-			// Verify items were removed
-			assert!(!store.has_data());
+			// Verify items are still in store after fetch
+			assert!(store.has_data());
+
+			// Now remove the items
+			if let Some(removable) = result.removable {
+				store.remove(&removable)?;
+				// Verify items were removed
+				assert!(!store.has_data());
+			} else {
+				panic!("Expected removable items but got none");
+			}
 		} else {
 			panic!("Expected data but got none");
 		}
@@ -335,6 +362,11 @@ mod tests {
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(items.len(), 1, "Should only fetch the small item");
 			assert_eq!(items[0]["type"], "small");
+
+			// Remove the fetched item
+			if let Some(removable) = result.removable {
+				store.remove(&removable)?;
+			}
 		}
 
 		// Second fetch should get the large item
@@ -343,6 +375,11 @@ mod tests {
 			let items = batch["batch"].as_array().unwrap();
 			assert_eq!(items.len(), 1, "Should fetch the large item");
 			assert_eq!(items[0]["type"], "large");
+
+			// Remove the fetched item
+			if let Some(removable) = result.removable {
+				store.remove(&removable)?;
+			}
 		}
 
 		Ok(())
