@@ -11,6 +11,13 @@ cargo fmt
 echo "Running clippy..."
 cargo clippy --all-features -- -D warnings
 
+# Check for and commit any formatting changes
+if ! git diff --quiet; then
+    echo "Committing formatting changes..."
+    git add .
+    git commit -m "Updated formatting & clippy results"
+fi
+
 # Run all tests
 echo "Running tests: '$> cargo test'"
 cargo test &> /dev/null
