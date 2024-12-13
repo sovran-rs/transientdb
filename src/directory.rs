@@ -259,7 +259,7 @@ impl DirectoryStore {
 			write!(
 				file,
 				"],\"sentAt\":\"{}\",\"writeKey\":\"{}\"}}",
-				Utc::now().to_rfc3339(),
+				Utc::now().format("%Y-%m-%dT%H:%M:%S.%3fZ").to_string(),
 				self.config.write_key
 			)?;
 			file.flush()?;
@@ -341,12 +341,28 @@ impl DirectoryStore {
 
 impl DataStore for DirectoryStore {
 	type Output = Vec<PathBuf>;
-
+	
 	fn has_data(&self) -> bool {
+		// Check if we have an active writer with data
+		if self.writer.is_some() {
+			return true;
+		}
+
+		// Check directory for any files matching our base filename pattern
 		fs::read_dir(&self.config.storage_location)
 			.map(|entries| {
 				entries.filter_map(Result::ok).any(|e| {
-					e.path().extension().and_then(|ext| ext.to_str()) == Some(Self::TEMP_EXTENSION)
+					let path = e.path();
+					if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+						// Check if filename starts with a number and contains our base_filename
+						let is_our_file = file_name.split('-')
+							.next()
+							.and_then(|s| s.parse::<u32>().ok())
+							.is_some()
+							&& file_name.contains(&self.config.base_filename);
+						return is_our_file;
+					}
+					false
 				})
 			})
 			.unwrap_or(false)
